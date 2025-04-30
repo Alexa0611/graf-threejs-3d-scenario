@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>three.js - FBX Loader with Rain and FogExp2 (No Fog on Model/Rain)</title>
+    <title>three.js - FBX Loader with Rain and FogExp2</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
     <link type="text/css" rel="stylesheet" href="main.css">
@@ -48,16 +48,14 @@
         const container = document.createElement('div');
         document.body.appendChild(container);
 
-        // Cámara
         camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 2000);
         camera.position.set(100, 200, 300);
 
-        // Escena y niebla exponencial
         scene = new THREE.Scene();
         scene.background = new THREE.Color(0xa0a0a0);
+        // Nieblas exponencial, densidad inicial 0.002
         scene.fog = new THREE.FogExp2(0xa0a0a0, 0.002);
 
-        // Iluminación
         const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 5);
         hemiLight.position.set(0, 200, 0);
         scene.add(hemiLight);
@@ -67,7 +65,6 @@
         dirLight.castShadow = true;
         scene.add(dirLight);
 
-        // Suelo
         const planeGeometry = new THREE.PlaneGeometry(500, 500);
         const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 1 });
         const ground = new THREE.Mesh(planeGeometry, planeMaterial);
@@ -75,17 +72,14 @@
         ground.receiveShadow = true;
         scene.add(ground);
 
-        // Grid
         const grid = new THREE.GridHelper(500, 10, 0x000000, 0x000000);
         grid.material.opacity = 0.2;
         grid.material.transparent = true;
         scene.add(grid);
 
-        // FBX Loader
         loader = new FBXLoader();
         loadAsset(params.asset);
 
-        // Renderer
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -93,25 +87,21 @@
         renderer.shadowMap.enabled = true;
         container.appendChild(renderer.domElement);
 
-        // Controles
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.target.set(0, 100, 0);
         controls.update();
 
-        // Eventos
         window.addEventListener('resize', onWindowResize);
         window.addEventListener('keydown', onKeyDown);
 
-        // Stats
         stats = new Stats();
         container.appendChild(stats.dom);
 
-        // GUI
         const gui = new GUI();
         gui.add(params, 'asset', assets).onChange(loadAsset);
         guiMorphsFolder = gui.addFolder('Morphs').hide();
 
-        // HDRI de fondo (se mantiene)
+        // HDRI Fondo (se mantiene)
         const rgbeLoader = new RGBELoader();
         rgbeLoader.load('models/rgbe/stierberg_sunrise_4k.hdr', function (texture) {
             texture.mapping = THREE.EquirectangularReflectionMapping;
@@ -131,7 +121,7 @@
             sound.play();
         });
 
-        // Lluvia
+        // Crear lluvia
         createRain();
     }
 
@@ -142,21 +132,16 @@
 
             object.traverse(function (child) {
                 if (child.isMesh) {
-                    // Material del modelo
                     child.material = new THREE.MeshStandardMaterial({
                         color: 0x4bc0ec,
                         transparent: true,
                         opacity: 0.9,
                         roughness: 0.5,
-                        metalness: 0.7,
-                        fog: false             // ← Desactivar fog
+                        metalness: 0.7
                     });
-                    child.material.needsUpdate = true;  // recompilar shader
-
                     child.castShadow = true;
                     child.receiveShadow = true;
 
-                    // Morph targets
                     if (child.morphTargetDictionary) {
                         guiMorphsFolder.show();
                         const meshFolder = guiMorphsFolder.addFolder(child.name || child.uuid);
@@ -191,14 +176,12 @@
 
         rainGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
 
-        // Material de la lluvia con fog desactivado
         const rainMaterial = new THREE.PointsMaterial({
             color: rainColor,
             size: 2.5,
             transparent: true,
             opacity: 0.9,
-            depthWrite: false,
-            fog: false                // ← Desactivar fog
+            depthWrite: false
         });
 
         rainParticles = new THREE.Points(rainGeo, rainMaterial);
@@ -209,7 +192,6 @@
         const delta = clock.getDelta();
         if (mixer) mixer.update(delta);
 
-        // Movimiento de gotas
         const positions = rainParticles.geometry.attributes.position.array;
         for (let i = 0; i < positions.length; i += 3) {
             positions[i + 1] -= rainSpeed;
@@ -222,7 +204,6 @@
         }
         rainParticles.geometry.attributes.position.needsUpdate = true;
 
-        // Render y stats
         renderer.render(scene, camera);
         stats.update();
     }
@@ -235,7 +216,7 @@
 
     function onKeyDown(event) {
         switch (event.key) {
-            // Control lluvia
+            // Lluvia
             case "ArrowUp":
                 rainSpeed += 0.5;
                 break;
@@ -262,7 +243,7 @@
                 wind += 0.1;
                 break;
 
-            // Control niebla exponencial
+            // FogExp2: densidad ajustable con flechas ← →
             case "ArrowLeft":
                 scene.fog.density = Math.max(0.0001, scene.fog.density - 0.0005);
                 break;
