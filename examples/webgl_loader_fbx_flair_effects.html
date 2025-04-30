@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>three.js - FBX Loader with Rain and FogExp2 (No Fog on Model/Rain)</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <link type="text/css" rel="stylesheet" href="main.css">
+</head>
+
+<body>
+    <div id="info">
+        <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> - FBXLoader + Rain &amp; FogExp2
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "../build/three.module.js",
+            "three/addons/": "./jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+
+    import * as THREE from 'three';
+    import Stats from 'three/addons/libs/stats.module.js';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+    import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+    import { Audio, AudioListener, AudioLoader } from 'three';
+
+    let camera, scene, renderer, stats, object, loader, guiMorphsFolder;
+    let mixer;
+    let rainParticles;
+    let rainSpeed = 4;
+    let wind = 0;
+    let rainColor = 0xffffff;
+    const rainCount = 1500;
+    const clock = new THREE.Clock();
+    const params = { asset: 'Samba Dancing' };
+    const assets = ['Samba Dancing', 'morph_test'];
+
+    init();
+
+    function init() {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        // Cámara
+        camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 2000);
+        camera.position.set(100, 200, 300);
+
+        // Escena y niebla exponencial
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xa0a0a0);
+        scene.fog = new THREE.FogExp2(0xa0a0a0, 0.002);
+
+        // Iluminación
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 5);
+        hemiLight.position.set(0, 200, 0);
+        scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 5);
+        dirLight.position.set(0, 200, 100);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // Suelo
+        const planeGeometry = new THREE.PlaneGeometry(500, 500);
+        const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 1 });
+        const ground = new THREE.Mesh(planeGeometry, planeMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Grid
+        const grid = new THREE.GridHelper(500, 10, 0x000000, 0x000000);
+        grid.material.opacity = 0.2;
+        grid.material.transparent = true;
+        scene.add(grid);
+
+        // FBX Loader
+        loader = new FBXLoader();
+        loadAsset(params.asset);
+
+        // Renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setAnimationLoop(animate);
+        renderer.shadowMap.enabled = true;
+        container.appendChild(renderer.domElement);
+
+        // Controles
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 100, 0);
+        controls.update();
+
+        // Eventos
+        window.addEventListener('resize', onWindowResize);
+        window.addEventListener('keydown', onKeyDown);
+
+        // Stats
+        stats = new Stats();
+        container.appendChild(stats.dom);
+
+        // GUI
+        const gui = new GUI();
+        gui.add(params, 'asset', assets).onChange(loadAsset);
+        guiMorphsFolder = gui.addFolder('Morphs').hide();
+
+        // HDRI de fondo (se mantiene)
+        const rgbeLoader = new RGBELoader();
+        rgbeLoader.load('models/rgbe/stierberg_sunrise_4k.hdr', function (texture) {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            scene.background = texture;
+            scene.environment = texture;
+        });
+
+        // Audio (se mantiene)
+        const listener = new AudioListener();
+        camera.add(listener);
+        const sound = new Audio(listener);
+        const audioLoader = new AudioLoader();
+        audioLoader.load('models/rgbe/audio.mp3', function (buffer) {
+            sound.setBuffer(buffer);
+            sound.setLoop(true);
+            sound.setVolume(0.5);
+            sound.play();
+        });
+
+        // Lluvia
+        createRain();
+    }
+
+    function loadAsset(asset) {
+        loader.load('models/fbx/' + asset + '.fbx', function (group) {
+            if (object) scene.remove(object);
+            object = group;
+
+            object.traverse(function (child) {
+                if (child.isMesh) {
+                    // Material del modelo
+                    child.material = new THREE.MeshStandardMaterial({
+                        color: 0x4bc0ec,
+                        transparent: true,
+                        opacity: 0.9,
+                        roughness: 0.5,
+                        metalness: 0.7,
+                        fog: false             // ← Desactivar fog
+                    });
+                    child.material.needsUpdate = true;  // recompilar shader
+
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+
+                    // Morph targets
+                    if (child.morphTargetDictionary) {
+                        guiMorphsFolder.show();
+                        const meshFolder = guiMorphsFolder.addFolder(child.name || child.uuid);
+                        Object.keys(child.morphTargetDictionary).forEach(key => {
+                            meshFolder.add(child.morphTargetInfluences, child.morphTargetDictionary[key], 0, 1, 0.01);
+                        });
+                    }
+                }
+            });
+
+            scene.add(object);
+            if (object.animations && object.animations.length) {
+                mixer = new THREE.AnimationMixer(object);
+                mixer.clipAction(object.animations[0]).play();
+            } else {
+                mixer = null;
+            }
+        });
+    }
+
+    function createRain() {
+        const rainGeo = new THREE.BufferGeometry();
+        const positions = [];
+
+        for (let i = 0; i < rainCount; i++) {
+            positions.push(
+                Math.random() * 500 - 250,
+                Math.random() * 2000,
+                Math.random() * 500 - 250
+            );
+        }
+
+        rainGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+
+        // Material de la lluvia con fog desactivado
+        const rainMaterial = new THREE.PointsMaterial({
+            color: rainColor,
+            size: 2.5,
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false,
+            fog: false                // ← Desactivar fog
+        });
+
+        rainParticles = new THREE.Points(rainGeo, rainMaterial);
+        scene.add(rainParticles);
+    }
+
+    function animate() {
+        const delta = clock.getDelta();
+        if (mixer) mixer.update(delta);
+
+        // Movimiento de gotas
+        const positions = rainParticles.geometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {
+            positions[i + 1] -= rainSpeed;
+            positions[i] += wind;
+            if (positions[i + 1] < 0) {
+                positions[i + 1] = 2000;
+                positions[i] = Math.random() * 500 - 250;
+                positions[i + 2] = Math.random() * 500 - 250;
+            }
+        }
+        rainParticles.geometry.attributes.position.needsUpdate = true;
+
+        // Render y stats
+        renderer.render(scene, camera);
+        stats.update();
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function onKeyDown(event) {
+        switch (event.key) {
+            // Control lluvia
+            case "ArrowUp":
+                rainSpeed += 0.5;
+                break;
+            case "ArrowDown":
+                rainSpeed = Math.max(0.5, rainSpeed - 0.5);
+                break;
+            case "r": case "R":
+                rainParticles.material.color.set(0xff0000);
+                rainParticles.material.needsUpdate = true;
+                break;
+            case "g": case "G":
+                rainParticles.material.color.set(0x00ff00);
+                rainParticles.material.needsUpdate = true;
+                break;
+            case "b": case "B":
+                rainParticles.material.color.set(0x0000ff);
+                rainParticles.material.needsUpdate = true;
+                break;
+            case "w": case "W":
+                rainParticles.material.color.set(0xffffff);
+                rainParticles.material.needsUpdate = true;
+                break;
+            case "v": case "V":
+                wind += 0.1;
+                break;
+
+            // Control niebla exponencial
+            case "ArrowLeft":
+                scene.fog.density = Math.max(0.0001, scene.fog.density - 0.0005);
+                break;
+            case "ArrowRight":
+                scene.fog.density += 0.0005;
+                break;
+            case "a": case "A":
+                scene.fog.color.set(0xff0000);
+                break;
+            case "s": case "S":
+                scene.fog.color.set(0x00ff00);
+                break;
+            case "d": case "D":
+                scene.fog.color.set(0x0000ff);
+                break;
+            case "f": case "F":
+                scene.fog.color.set(0xffffff);
+                break;
+        }
+    }
+
+    </script>
+</body>
+</html>
